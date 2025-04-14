@@ -93,7 +93,7 @@ To generate a hashed password:
 tor --hash-password your_password
 ```
 
-Start Tor manually:
+Start Tor manually in the background:
 
 ```bash
 tor &
