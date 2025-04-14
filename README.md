@@ -1,3 +1,5 @@
+<img src="https://github.com/user-attachments/assets/02206eff-e899-47a1-9ca8-5480c24b79b7" alt="Alt Text" height="250">
+
 # myrmex
 
 The compact web crawling toolkit.
