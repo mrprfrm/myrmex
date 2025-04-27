@@ -1,4 +1,4 @@
-<img src="https://github.com/user-attachments/assets/fdcf9749-a847-474c-a03d-e6c92f630635" alt="Alt Text" height="250">
+<img src="https://github.com/user-attachments/assets/fdcf9749-a847-474c-a03d-e6c92f630635" alt="Alt Text" max-height="250">
 
 # myrmex
 
