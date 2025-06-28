@@ -4,7 +4,7 @@ from typing import Any, Hashable, Mapping, Optional, Protocol
 from urllib import parse
 
 import aiohttp
-from aiohttp import ClientTimeout
+from aiohttp import ClientResponse, ClientTimeout
 from aiohttp_socks import ProxyConnector
 from result import Err, Ok, Result
 from stem.control import Controller, Signal
@@ -19,7 +19,7 @@ class Myrmex(Protocol):
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[Hashable, Any]] = None,
         timeout: Optional[int] = None,
-    ) -> Result[str, Exception]: ...
+    ) -> Result[ClientResponse, Exception]: ...
 
 
 class Crawler(Myrmex):
@@ -58,7 +58,7 @@ class Crawler(Myrmex):
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[Hashable, Any]] = None,
         timeout: Optional[int] = None,
-    ) -> Result[str, Exception]:
+    ) -> Result[ClientResponse, Exception]:
         """
         Performs an HTTP GET request.
         """
@@ -70,7 +70,7 @@ class Crawler(Myrmex):
                 timeout=ClientTimeout(timeout or self._timeout),
             ) as response:
                 response.raise_for_status()
-                return Ok(await response.text())
+                return Ok(response)
         except Exception as e:
             return Err(e)
 
@@ -123,7 +123,7 @@ class TorCrawler(Myrmex):
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[Hashable, Any]] = None,
         timeout: Optional[int] = None,
-    ) -> Result[str, Exception]:
+    ) -> Result[ClientResponse, Exception]:
         """
         Performs an HTTP GET request through the configured Tor SOCKS5 proxy.
 
@@ -139,7 +139,7 @@ class TorCrawler(Myrmex):
                 timeout=ClientTimeout(timeout or self._timeout),
             ) as response:
                 response.raise_for_status()
-                return Ok(await response.text())
+                return Ok(response)
         except Exception as e:
             return Err(e)
 

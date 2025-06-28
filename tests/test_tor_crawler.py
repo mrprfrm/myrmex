@@ -18,7 +18,10 @@ async def test_fetch_success():
         async with TorCrawler(ADDRESS, PASSWORD) as crawler:
             result = await crawler.fetch("http://example.com")
             assert result.is_ok()
-            assert result.ok() == "Hello"
+            if response := result.ok():
+                assert await response.text() == "Hello"
+                return
+            assert False, "Response is None"
 
 
 @pytest.mark.asyncio
