@@ -64,13 +64,13 @@ class Crawler(Myrmex):
         """
         try:
             url = f"{base_url}?{parse.urlencode(params or {})}"
-            async with self._session.get(
+            response = await self._session.get(
                 url,
                 headers=headers or self._headers,
                 timeout=ClientTimeout(timeout or self._timeout),
-            ) as response:
-                response.raise_for_status()
-                return Ok(response)
+            )
+            response.raise_for_status()
+            return Ok(response)
         except Exception as e:
             return Err(e)
 
@@ -133,13 +133,13 @@ class TorCrawler(Myrmex):
 
         try:
             url = f"{base_url}?{parse.urlencode(params or {})}"
-            async with self._session.get(
+            response = await self._session.get(
                 url,
                 headers=headers or self._headers,
                 timeout=ClientTimeout(timeout or self._timeout),
-            ) as response:
-                response.raise_for_status()
-                return Ok(response)
+            )
+            response.raise_for_status()
+            return Ok(response)
         except Exception as e:
             return Err(e)
 
