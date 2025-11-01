@@ -9,8 +9,11 @@ from aiohttp_socks import ProxyConnector
 from result import Err, Ok, Result
 from stem.control import Controller, Signal
 
+from .constants import CHUNK_SIZE, CONCURRENCY_LIMIT, MAX_FILE_SIZE, TIMEOUT
+from .promises.load import LoadPromise
 
-class Myrmex(Protocol):
+
+class CrawlerLike(Protocol):
     async def close(self) -> Result[None, Exception]: ...
     async def fetch(
         self,
@@ -18,15 +21,18 @@ class Myrmex(Protocol):
         *,
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[Hashable, Any]] = None,
-        timeout: Optional[int] = None,
+        timeout: float = TIMEOUT,
     ) -> Result[ClientResponse, Exception]: ...
 
+    def load(self, url: str) -> LoadPromise: ...
 
-class Crawler(Myrmex):
+
+class Crawler(CrawlerLike):
     def __init__(
         self,
-        timeout: int = 10,
+        timeout: float = TIMEOUT,
         headers: Optional[Mapping[str, str]] = None,
+        semaphore: Optional[asyncio.Semaphore] = None,
     ):
         """
         A simple crawler context manager using aiohttp.
@@ -38,6 +44,9 @@ class Crawler(Myrmex):
         self._headers = headers or {}
         self._timeout = timeout
         self._session = aiohttp.ClientSession()
+        self._semaphore = (
+            asyncio.Semaphore(CONCURRENCY_LIMIT) if semaphore is None else semaphore
+        )
 
     async def __aenter__(self):
         return self
@@ -57,7 +66,7 @@ class Crawler(Myrmex):
         *,
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[Hashable, Any]] = None,
-        timeout: Optional[int] = None,
+        timeout: Optional[float] = None,
     ) -> Result[ClientResponse, Exception]:
         """
         Performs an HTTP GET request.
@@ -74,13 +83,30 @@ class Crawler(Myrmex):
         except Exception as e:
             return Err(e)
 
+    def load(
+        self,
+        url: str,
+        *,
+        chunk_size: int = CHUNK_SIZE,
+        max_file_size: int = MAX_FILE_SIZE,
+        timeout: float = TIMEOUT,
+    ) -> LoadPromise:
+        promise = LoadPromise(
+            self._session,
+            max_file_size=max_file_size,
+            chunk_size=chunk_size,
+            timeout=timeout or self._timeout,
+            semaphore=self._semaphore,
+        )
+        return promise.execute(url)
 
-class TorCrawler(Myrmex):
+
+class ProxyCrawler(CrawlerLike):
     def __init__(
         self,
         address: str,
         password: str,
-        timeout: int = 10,
+        timeout: float = 10,
         headers: Optional[Mapping[str, str]] = None,
     ):
         """
@@ -122,7 +148,7 @@ class TorCrawler(Myrmex):
         *,
         headers: Optional[Mapping[str, str]] = None,
         params: Optional[Mapping[Hashable, Any]] = None,
-        timeout: Optional[int] = None,
+        timeout: Optional[float] = None,
     ) -> Result[ClientResponse, Exception]:
         """
         Performs an HTTP GET request through the configured Tor SOCKS5 proxy.

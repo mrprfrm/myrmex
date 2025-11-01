@@ -3,23 +3,12 @@ import re
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import AsyncGenerator, Tuple, TypeAlias
+from typing import AsyncGenerator, Optional, Tuple
 from urllib.parse import unquote_to_bytes, urlparse
 
 import aiohttp
-import constants
-from result import Err, Ok, Result
 
-PathContent: TypeAlias = Tuple[str | Path, bytes]
-
-AsyncResultPathStream: TypeAlias = AsyncGenerator[Result[Path, BaseException], None]
-AsyncResultPathContentStream: TypeAlias = AsyncGenerator[
-    Result[PathContent, BaseException], None
-]
-
-AsyncPathStream: TypeAlias = AsyncGenerator[Path, None]
-AsyncPathContentStream: TypeAlias = AsyncGenerator[PathContent, None]
-
+from .constants import CHUNK_SIZE, MAX_COMPRESSION_RATIO, MAX_FILE_SIZE, TIMEOUT
 
 FILENAME_PATTERN = re.compile(r'filename="?([^"]+)"?', re.IGNORECASE)
 CHARSET_FILENAME_PATTERN = re.compile(
@@ -36,9 +25,18 @@ def sanitize_filename(filename: str) -> str:
 
 
 async def save(
-    path: str | Path, content: bytes, *, base_path: str | Path = Path.cwd()
+    path: str | Path,
+    content: bytes,
+    *,
+    base_path: str | Path = Path.cwd(),
+    flatten: bool = False,
 ) -> Path:
     path = Path(path).resolve(strict=False)
+    if flatten:
+        while path.suffix:
+            path = path.with_suffix("")
+
+    path = (base_path / Path(path)).resolve(strict=False)
     if not path.is_relative_to(base_path):
         raise PermissionError(
             f"The file path: {path} leads outside of the root directory: {base_path}"
@@ -55,31 +53,15 @@ async def extract(
     path: str | Path,
     content: bytes,
     *extensions: str,
-    base_path: str | Path = Path.cwd(),
-    unwrap: bool = False,
-    max_compression_ratio: float = constants.MAX_COMPRESSION_RATIO,
-    max_file_size: int = constants.MAX_FILE_SIZE,
-) -> AsyncPathContentStream:
+    max_compression_ratio: float = MAX_COMPRESSION_RATIO,
+    max_file_size: int = MAX_FILE_SIZE,
+) -> AsyncGenerator[Tuple[str | Path, bytes], None]:
     path = Path(path).resolve(strict=False)
-    if not path.is_relative_to(base_path):
-        raise PermissionError(
-            f"The file path: {path} leads outside of the root directory: {base_path}"
-        )
-
-    base_path = base_path
-    if not unwrap:
-        base_path = path
-        while base_path.suffix:
-            base_path = base_path.with_suffix("")
 
     with zipfile.ZipFile(BytesIO(content), "r") as zip_ref:
         for info in zip_ref.infolist():
             filename = sanitize_filename(info.filename)
-            target_path = (base_path / Path(filename)).resolve(strict=False)
-            if not target_path.is_relative_to(base_path):
-                raise PermissionError(
-                    f"The file path: {target_path} leads outside of the root directory: {base_path}"
-                )
+            target_path = Path(filename).resolve(strict=False)
 
             if info.compress_size > 0:
                 ratio = info.file_size / info.compress_size
@@ -98,21 +80,17 @@ async def extract(
                     yield target_path, file.read()
 
 
-async def download(
+async def load(
     url: str,
     *,
-    base_path: str | Path = Path.cwd(),
     session: aiohttp.ClientSession,
-    timeout: float = constants.TIMEOUT,
-    max_file_size: int = constants.MAX_FILE_SIZE,
-    chunk_size: int = constants.CHUNK_SIZE,
-) -> AsyncResultPathContentStream:
-    to = aiohttp.ClientTimeout(timeout)
-    async with session.get(url, timeout=to) as response:
-        try:
-            response.raise_for_status()
-        except aiohttp.ClientResponseError as exc:
-            yield Err(exc)
+    timeout: Optional[aiohttp.ClientTimeout] = None,
+    max_file_size: int = MAX_FILE_SIZE,
+    chunk_size: int = CHUNK_SIZE,
+) -> AsyncGenerator[Tuple[str | Path, bytes], None]:
+    timeout = aiohttp.ClientTimeout(TIMEOUT) if timeout else timeout
+    async with session.get(url, timeout=timeout) as response:
+        response.raise_for_status()
 
         filename = None
         if disposition := response.headers.get("Content-Disposition"):
@@ -161,5 +139,5 @@ async def download(
                     )
                 buffer.write(chunk)
 
-            path = (base_path / Path(filename)).resolve(strict=False)
-            yield Ok((path, buffer.getvalue()))
+            path = Path(filename).resolve(strict=False)
+            yield path, buffer.getvalue()

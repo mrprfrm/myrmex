@@ -8,10 +8,11 @@ from typing import (
     Generator,
     ParamSpec,
     Protocol,
-    Self,
     TypeVar,
     cast,
 )
+
+from typing_extensions import Self
 
 P = ParamSpec("P")
 R = TypeVar("R")

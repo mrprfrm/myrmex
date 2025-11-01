@@ -1,9 +1,9 @@
 from .base import Promise
-from .download import DownloadPromise, ExtractPromise, SavePromise
+from .load import ExtractPromise, LoadPromise, SavePromise
 
 __all__ = [
     "Promise",
-    "DownloadPromise",
+    "LoadPromise",
     "ExtractPromise",
     "SavePromise",
 ]
