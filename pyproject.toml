@@ -34,6 +34,7 @@ dependencies = [
     "aiohttp-socks>=0.10.1",
     "result>=0.17.0",
     "stem>=1.8.2",
+    "trio>=0.32.0",
 ]
 
 [project.urls]
