@@ -35,6 +35,7 @@ dependencies = [
     "result>=0.17.0",
     "stem>=1.8.2",
     "trio>=0.32.0",
+    "httpx>=0.28.1",
 ]
 
 [project.urls]

@@ -1,3 +1,5 @@
+import copy
+import functools
 import inspect
 from typing import (
     Any,
@@ -36,41 +38,52 @@ class PromiseNode(Generic[P, R]):
         parent: Optional["PromiseNode[V, U]"] = None,
     ) -> None:
         self._fn = fn
-        self.__parent: Optional["PromiseNode[Any, Any]"] = parent
+        self._parent: Optional["PromiseNode[Any, Any]"] = parent
+        self._head: Coroutine[None, None, R] | None = None
 
-    def __copy(self, *, parent: Optional["PromiseNode[V, U]"]) -> "PromiseNode[P, R]":
-        return PromiseNode(self._fn, parent=parent)
+    def __clone(self, *, parent: Optional["PromiseNode[V, U]"]) -> "PromiseNode[P, R]":
+        new = copy.copy(self)
+        new._parent = parent
+        new._head = None
+        return new
 
     def __await__(self) -> Generator[None, None, R]:
         current = self
         promises: List[PromiseNode[P, R]] = []
         while current is not None:
             promises.append(current)
-            current = current.__parent
+            current = current._parent
 
         async def execute() -> R:
             result = None
             async with trio.open_nursery():
                 while promises:
-                    handler = promises.pop()
-                    signature = inspect.signature(handler._fn)
+                    promise = promises.pop()
+                    if promise._head is not None:
+                        result = await promise._head
+                        continue
+                    signature = inspect.signature(promise._fn)
                     if result is None:
                         bound = signature.bind()
                     else:
                         bound = signature.bind(result)
-                    result = await handler._fn(*bound.args, **bound.kwargs)
+                    result = await promise._fn(*bound.args, **bound.kwargs)
             return cast(R, result)
 
         return execute().__await__()
 
     def then(
-        self, nxt: Callable[[R], Coroutine[None, None, K]] | "PromiseNode[[R], K]"
+        self,
+        nxt: Callable[[R], Coroutine[None, None, K]] | "PromiseNode[[R], K]",
+        **kwargs: Any,
     ) -> "PromiseNode[[R], K]":
-        if self.__parent is not None:
+        if self._parent is None and self._head is None:
             raise RuntimeError("Cannot chain a root promise that is not initialized.")
 
         if isinstance(nxt, PromiseNode):
-            return nxt.__copy(parent=self)
+            return nxt.__clone(parent=self)
+
+        nxt = functools.partial(nxt, **kwargs)
         nxt = PromiseNode[[R], K](nxt, parent=self)
         return nxt
 
@@ -81,7 +94,7 @@ class Promise(PromiseNode[P, R]):
         self._head: Optional[Coroutine[None, None, R]] = None
 
     def init(self, *args: P.args, **kwargs: P.kwargs) -> Self:
-        if self.__parent is not None:
+        if self._parent is not None:
             raise RuntimeError("Cannot initialize a chained promise directly.")
         self._head = self._fn(*args, **kwargs)
         return self
