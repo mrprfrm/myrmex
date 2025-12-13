@@ -8,7 +8,6 @@ from typing import (
     Generator,
     Generic,
     List,
-    Optional,
     ParamSpec,
     TypeVar,
     cast,
@@ -35,16 +34,19 @@ class PromiseNode(Generic[P, R]):
         self,
         fn: Callable[P, Coroutine[None, None, R]],
         *,
-        parent: Optional["PromiseNode[V, U]"] = None,
+        parent: "PromiseNode[V, U] | None" = None,
+        scope: trio.CancelScope | None = None,
     ) -> None:
         self._fn = fn
-        self._parent: Optional["PromiseNode[Any, Any]"] = parent
+        self._parent: "PromiseNode[Any, Any] | None" = parent
         self._head: Coroutine[None, None, R] | None = None
+        self._scope = scope or trio.CancelScope()
 
-    def __clone(self, *, parent: Optional["PromiseNode[V, U]"]) -> "PromiseNode[P, R]":
+    def __clone(self, *, parent: "PromiseNode[V, U] | None") -> "PromiseNode[P, R]":
         new = copy.copy(self)
         new._parent = parent
         new._head = None
+        new._scope = self._scope
         return new
 
     def __await__(self) -> Generator[None, None, R]:
@@ -56,18 +58,19 @@ class PromiseNode(Generic[P, R]):
 
         async def execute() -> R:
             result = None
-            async with trio.open_nursery():
-                while promises:
-                    promise = promises.pop()
-                    if promise._head is not None:
-                        result = await promise._head
-                        continue
-                    signature = inspect.signature(promise._fn)
-                    if result is None:
-                        bound = signature.bind()
-                    else:
-                        bound = signature.bind(result)
-                    result = await promise._fn(*bound.args, **bound.kwargs)
+            with self._scope:
+                async with trio.open_nursery():
+                    while promises:
+                        promise = promises.pop()
+                        if promise._head is not None:
+                            result = await promise._head
+                            continue
+                        signature = inspect.signature(promise._fn)
+                        if result is None:
+                            bound = signature.bind()
+                        else:
+                            bound = signature.bind(result)
+                        result = await promise._fn(*bound.args, **bound.kwargs)
             return cast(R, result)
 
         return execute().__await__()
@@ -89,12 +92,20 @@ class PromiseNode(Generic[P, R]):
 
 
 class Promise(PromiseNode[P, R]):
-    def __init__(self, fn: Callable[P, Coroutine[None, None, R]]) -> None:
-        super().__init__(fn, parent=None)
-        self._head: Optional[Coroutine[None, None, R]] = None
+    def __init__(
+        self,
+        fn: Callable[P, Coroutine[None, None, R]],
+        *,
+        scope: trio.CancelScope | None = None,
+    ) -> None:
+        super().__init__(fn, parent=None, scope=scope)
+        self._head: Coroutine[None, None, R] | None = None
 
     def init(self, *args: P.args, **kwargs: P.kwargs) -> Self:
         if self._parent is not None:
             raise RuntimeError("Cannot initialize a chained promise directly.")
         self._head = self._fn(*args, **kwargs)
         return self
+
+
+__all__ = ["Promise"]

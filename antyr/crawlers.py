@@ -1,39 +1,18 @@
-import asyncio
 import socket
-from typing import Any, Hashable, Mapping, Optional, Protocol
-from urllib import parse
+from typing import Any, Dict, Mapping
 
-import aiohttp
-from aiohttp import ClientResponse, ClientTimeout
-from aiohttp_socks import ProxyConnector
+import httpx
+import trio
 from result import Err, Ok, Result
-from stem.control import Controller, Signal
+from stem import Signal
+from stem.control import Controller
 
-from .constants import CHUNK_SIZE, CONCURRENCY_LIMIT, MAX_FILE_SIZE, TIMEOUT
-from .promises.load import LoadPromise
-
-
-class CrawlerLike(Protocol):
-    async def close(self) -> Result[None, Exception]: ...
-    async def fetch(
-        self,
-        base_url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[Hashable, Any]] = None,
-        timeout: float = TIMEOUT,
-    ) -> Result[ClientResponse, Exception]: ...
-
-    def load(self, url: str) -> LoadPromise: ...
+from .constants import CHUNK_SIZE, TIMEOUT
+from .http import FetchPromise
 
 
-class Crawler(CrawlerLike):
-    def __init__(
-        self,
-        timeout: float = TIMEOUT,
-        headers: Optional[Mapping[str, str]] = None,
-        semaphore: Optional[asyncio.Semaphore] = None,
-    ):
+class HttpCrawler:
+    def __init__(self, base_url: str = "", *, timeout: float = TIMEOUT):
         """
         A simple crawler context manager using aiohttp.
 
@@ -41,153 +20,63 @@ class Crawler(CrawlerLike):
             timeout: request timeout in seconds
             headers: optional HTTP headers to send (e.g., User-Agent)
         """
-        self._headers = headers or {}
+
+        self._base_url = base_url
         self._timeout = timeout
-        self._session = aiohttp.ClientSession()
-        self._semaphore = (
-            asyncio.Semaphore(CONCURRENCY_LIMIT) if semaphore is None else semaphore
-        )
+        self._scope = trio.CancelScope()
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self._session.close()
-
-    async def close(self) -> Result[None, Exception]:
-        """
-        Closes the aiohttp session.
-        """
-        return Ok(await self._session.close())
-
-    async def fetch(
-        self,
-        base_url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[Hashable, Any]] = None,
-        timeout: Optional[float] = None,
-    ) -> Result[ClientResponse, Exception]:
-        """
-        Performs an HTTP GET request.
-        """
-        try:
-            url = f"{base_url}?{parse.urlencode(params or {})}"
-            response = await self._session.get(
-                url,
-                headers=headers or self._headers,
-                timeout=ClientTimeout(timeout or self._timeout),
-            )
-            response.raise_for_status()
-            return Ok(response)
-        except Exception as e:
-            return Err(e)
-
-    def load(
+    def fetch(
         self,
         url: str,
         *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        cookies: Dict[str, str] | None = None,
+        auth: httpx.Auth | None = None,
+        proxy: str | httpx.URL | httpx.Proxy | None = None,
+        follow_redirects: bool = True,
+        timeout: float | None = None,
+        extensions: Mapping[str, Any] | None = None,
         chunk_size: int = CHUNK_SIZE,
-        max_file_size: int = MAX_FILE_SIZE,
-        timeout: float = TIMEOUT,
-    ) -> LoadPromise:
-        promise = LoadPromise(
-            self._session,
-            max_file_size=max_file_size,
+    ) -> FetchPromise:
+        """Performs an HTTP GET request."""
+        return FetchPromise(
+            base_url=self._base_url,
+            proxy=proxy,
             chunk_size=chunk_size,
             timeout=timeout or self._timeout,
-            semaphore=self._semaphore,
+            scope=self._scope,
+        ).init(
+            url,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            extensions=extensions,
         )
-        return promise.execute(url)
-
-
-class ProxyCrawler(CrawlerLike):
-    def __init__(
-        self,
-        address: str,
-        password: str,
-        timeout: float = 10,
-        headers: Optional[Mapping[str, str]] = None,
-    ):
-        """
-        A crawler context manager using SOCKS5 proxy (e.g., Tor),
-        with optional per-request IP rotation.
-
-        Args:
-            address: str - proxy URL (e.g., 'socks5h://127.0.0.1:9050')
-            password: str - password for Tor control port (used for IP rotation)
-            timeout: request timeout in seconds
-            headers: optional HTTP headers to send (e.g., User-Agent)
-        """
-
-        self._address = address
-        self._password = password
-        self._host = address.split("//")[1].split(":")[0]
-
-        self._headers = headers or {}
-        self._timeout = timeout
-
-        connector = ProxyConnector.from_url(self._address)
-        self._session = aiohttp.ClientSession(connector=connector)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self._session.close()
-
-    async def close(self) -> Result[None, Exception]:
-        """
-        Closes the aiohttp session.
-        """
-        return Ok(await self._session.close())
-
-    async def fetch(
-        self,
-        base_url: str,
-        *,
-        headers: Optional[Mapping[str, str]] = None,
-        params: Optional[Mapping[Hashable, Any]] = None,
-        timeout: Optional[float] = None,
-    ) -> Result[ClientResponse, Exception]:
-        """
-        Performs an HTTP GET request through the configured Tor SOCKS5 proxy.
-
-        Constructs a full URL by combining the `base_url` with optional query parameters,
-        and executes the GET request using optional custom headers and timeout settings.
-        """
-
-        try:
-            url = f"{base_url}?{parse.urlencode(params or {})}"
-            response = await self._session.get(
-                url,
-                headers=headers or self._headers,
-                timeout=ClientTimeout(timeout or self._timeout),
-            )
-            response.raise_for_status()
-            return Ok(response)
-        except Exception as e:
-            return Err(e)
 
     async def rotate_ip(
-        self, *, timeout: Optional[int] = None
+        self, host: str, password: str, *, timeout: float | None = None
     ) -> Result[None, Exception]:
         """
         Requests a new IP address from the Tor network by sending a `NEWNYM` signal
         to the Tor control port.
         """
 
-        def send_reset_ip_signal(host: str):
+        def send_reset_ip_signal():
             host_ip = socket.gethostbyname(host)
             with Controller.from_port(address=host_ip) as controller:
-                controller.authenticate(password=self._password)
+                controller.authenticate(password=password)
                 controller.signal(Signal.NEWNYM)  # type: ignore[attr-defined]
 
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(send_reset_ip_signal, self._host),
-                timeout=timeout or self._timeout,
-            )
-            return Ok(result)
+            with trio.fail_after(timeout or self._timeout):
+                await trio.to_thread.run_sync(send_reset_ip_signal)
+            return Ok(None)
         except Exception as e:
             return Err(e)
+
+    async def abort(self) -> None:
+        """Aborts all ongoing requests."""
+        self._scope.cancel()

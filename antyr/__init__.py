@@ -1,3 +1,3 @@
-from .crawlers import Crawler, ProxyCrawler
+from .crawlers import HttpCrawler
 
-__all__ = ["Crawler", "ProxyCrawler"]
+__all__ = ["HttpCrawler"]
