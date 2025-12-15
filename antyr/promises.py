@@ -75,6 +75,9 @@ class PromiseNode(Generic[P, R]):
 
         return execute().__await__()
 
+    def abort(self) -> None:
+        self._scope.cancel()
+
     def then(
         self,
         nxt: Callable[[R], Coroutine[None, None, K]] | "PromiseNode[[R], K]",

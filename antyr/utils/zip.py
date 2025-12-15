@@ -12,19 +12,26 @@ class AsyncIOBytes:
         self._buffer: IO[bytes] | None = None
 
     async def __aenter__(self) -> Self:
-        self._buffer = await trio.to_thread.run_sync(self._file.open, self._info)
+        await self.open()
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
-        if self._buffer is not None:
-            await trio.to_thread.run_sync(self._buffer.close)
+        await self.close()
 
     async def open(self) -> None:
-        self._buffer = await trio.to_thread.run_sync(self._file.open, self._info)
+        if self._buffer is not None:
+            raise RuntimeError("Buffer is already opened")
+
+        buffer = await trio.to_thread.run_sync(self._file.open, self._info)
+        self._buffer = buffer
 
     async def close(self) -> None:
-        if self._buffer is not None:
-            await trio.to_thread.run_sync(self._buffer.close)
+        buffer, self._buffer = self._buffer, None
+        if buffer is None:
+            return
+
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(buffer.close)
 
     async def read(self, size: int = -1) -> bytes:
         if self._buffer is None:
@@ -39,25 +46,29 @@ class AsyncZipFile:
         self._zip_file: zipfile.ZipFile | None = None
 
     async def __aenter__(self) -> Self:
-        def open_zip() -> zipfile.ZipFile:
-            return zipfile.ZipFile(self._file, "r")
-
-        self._zip_file = await trio.to_thread.run_sync(open_zip)
+        await self.open()
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
-        if self._zip_file is not None:
-            await trio.to_thread.run_sync(self._zip_file.close)
+        await self.close()
 
     async def open(self) -> None:
+        if self._zip_file is not None:
+            raise RuntimeError("Zip file is already opened")
+
         def open_zip() -> zipfile.ZipFile:
             return zipfile.ZipFile(self._file, "r")
 
-        self._zip_file = await trio.to_thread.run_sync(open_zip)
+        file = await trio.to_thread.run_sync(open_zip)
+        self._zip_file = file
 
     async def close(self) -> None:
-        if self._zip_file is not None:
-            await trio.to_thread.run_sync(self._zip_file.close)
+        file, self._zip_file = self._zip_file, None
+        if file is None:
+            return
+
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(file.close)
 
     async def infolist(self) -> Sequence[zipfile.ZipInfo]:
         if self._zip_file is None:
