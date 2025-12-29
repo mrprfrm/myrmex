@@ -1,18 +1,24 @@
 import socket
-from typing import Any, Dict, Mapping
+from types import TracebackType
+from typing import Any, Dict, Mapping, Type
 
 import httpx
 import trio
-from result import Err, Ok, Result
 from stem import Signal
 from stem.control import Controller
 
-from .constants import CHUNK_SIZE, TIMEOUT
-from .http import FetchPromise
+from .constants import TIMEOUT
+from .http import FetchResult
 
 
 class HttpCrawler:
-    def __init__(self, base_url: str = "", *, timeout: float = TIMEOUT):
+    def __init__(
+        self,
+        base_url: str = "",
+        *,
+        proxy: str | httpx.URL | httpx.Proxy | None = None,
+        timeout: float = TIMEOUT,
+    ):
         """
         A simple crawler context manager using aiohttp.
 
@@ -22,8 +28,18 @@ class HttpCrawler:
         """
 
         self._base_url = base_url
+        self._proxy = proxy
         self._timeout = timeout
-        self._scope = trio.CancelScope()
+        self._client = httpx.AsyncClient(base_url=base_url, proxy=proxy, timeout=timeout)
+
+    async def __aenter__(self) -> "HttpCrawler":
+        await self._client.__aenter__()
+        return self
+
+    async def __aexit__(
+        self, exc_type: Type[BaseException], exc: BaseException, tb: TracebackType
+    ) -> None:
+        await self._client.__aexit__(exc_type, exc, tb)
 
     def fetch(
         self,
@@ -33,32 +49,24 @@ class HttpCrawler:
         headers: Mapping[str, str] | None = None,
         cookies: Dict[str, str] | None = None,
         auth: httpx.Auth | None = None,
-        proxy: str | httpx.URL | httpx.Proxy | None = None,
         follow_redirects: bool = True,
         timeout: float | None = None,
         extensions: Mapping[str, Any] | None = None,
-        chunk_size: int = CHUNK_SIZE,
-    ) -> FetchPromise:
+    ) -> FetchResult:
         """Performs an HTTP GET request."""
-        return FetchPromise(
-            base_url=self._base_url,
-            proxy=proxy,
-            chunk_size=chunk_size,
-            timeout=timeout or self._timeout,
-            scope=self._scope,
-        ).init(
+
+        return FetchResult(self._client.get).init(
             url,
             params=params,
             headers=headers,
             cookies=cookies,
             auth=auth,
             follow_redirects=follow_redirects,
+            timeout=timeout if timeout is not None else self._timeout,
             extensions=extensions,
         )
 
-    async def rotate_ip(
-        self, host: str, password: str, *, timeout: float | None = None
-    ) -> Result[None, Exception]:
+    async def rotate_ip(self, host: str, password: str) -> None:
         """
         Requests a new IP address from the Tor network by sending a `NEWNYM` signal
         to the Tor control port.
@@ -70,13 +78,4 @@ class HttpCrawler:
                 controller.authenticate(password=password)
                 controller.signal(Signal.NEWNYM)  # type: ignore[attr-defined]
 
-        try:
-            with trio.fail_after(timeout or self._timeout):
-                await trio.to_thread.run_sync(send_reset_ip_signal)
-            return Ok(None)
-        except Exception as e:
-            return Err(e)
-
-    async def abort(self) -> None:
-        """Aborts all ongoing requests."""
-        self._scope.cancel()
+        await trio.to_thread.run_sync(send_reset_ip_signal)
