@@ -16,8 +16,8 @@ class HttpCrawler:
         self,
         base_url: str = "",
         *,
-        proxy: str | httpx.URL | httpx.Proxy | None = None,
         timeout: float = TIMEOUT,
+        proxy: str | httpx.URL | httpx.Proxy | None = None,
     ):
         """
         A simple crawler context manager using aiohttp.

@@ -1,9 +1,12 @@
 import zipfile
 from types import TracebackType
-from typing import IO, AsyncGenerator, Type
+from typing import IO, AsyncGenerator, Sequence, Type
 
 import trio
 from typing_extensions import Self
+
+from .func import normalize_filename
+from .streaming import Chunk, ContentStream
 
 
 class OpeningAbortError(Exception):
@@ -214,3 +217,54 @@ class AsyncZipFile:
             if info.is_dir():
                 continue
             yield AsyncZipMember(info, self._zip_file)
+
+
+class Extractor:
+    def __init__(self, file: IO[bytes]) -> None:
+        self._file = AsyncZipFile(file)
+
+    async def __aenter__(self) -> "Extractor":
+        await self._file.open()
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        await self._file.close()
+
+    async def extract(
+        self,
+        *,
+        file_extensions: Sequence[str] | None = None,
+        max_compression_ratio: float | None = None,
+        max_file_size: int | None = None,
+        chunk_size: int | None = None,
+    ) -> ContentStream:
+        async for member in self._file.files():
+            filename = normalize_filename(member.filename)
+
+            if file_extensions is not None and not any(
+                filename.lower().endswith(ext) for ext in file_extensions
+            ):
+                continue
+
+            if member.compress_size > 0:
+                ratio = member.file_size / member.compress_size
+                if max_compression_ratio is not None and ratio > max_compression_ratio:
+                    raise ValueError(
+                        f"File {filename} exceeds the maximum compression ratio: {ratio:.2f}"
+                    )
+
+            if max_file_size is not None and member.file_size > max_file_size:
+                raise ValueError(f"File is too large: {filename}")
+
+            async with member:
+                total = 0
+
+                async for chunk in member.chunks(chunk_size):
+                    offset, length = total, len(chunk)
+                    total += length
+                    yield Chunk(
+                        path=str(filename),
+                        content=bytes(chunk),
+                        offset=offset,
+                        length=length,
+                    )

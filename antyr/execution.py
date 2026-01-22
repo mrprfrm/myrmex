@@ -38,25 +38,25 @@ class LazyExecutionNode(Generic[P, R]):
 
     def __await__(self) -> Generator[None, None, R]:
         current = self
-        promises: List[LazyExecutionNode[P, R]] = []
+        nodes: List[LazyExecutionNode[P, R]] = []
         while current is not None:
-            promises.append(current)
+            nodes.append(current)
             current = current._parent
 
         async def execute() -> R:
             result = None
             async with trio.open_nursery():
-                while promises:
-                    promise = promises.pop()
-                    if promise._head is not None:
-                        result = await promise._head
+                while nodes:
+                    node = nodes.pop()
+                    if node._head is not None:
+                        result = await node._head
                         continue
-                    signature = inspect.signature(promise._fn)
+                    signature = inspect.signature(node._fn)
                     if result is None:
                         bound = signature.bind()
                     else:
                         bound = signature.bind(result)
-                    result = await promise._fn(*bound.args, **bound.kwargs)
+                    result = await node._fn(*bound.args, **bound.kwargs)
             return cast(R, result)
 
         return execute().__await__()
@@ -71,7 +71,7 @@ class LazyExecutionNode(Generic[P, R]):
         **kwargs: Any,
     ) -> "LazyExecutionNode[[R], K]":
         if self._parent is None and self._head is None:
-            raise RuntimeError("Cannot chain a root promise that is not initialized.")
+            raise RuntimeError("Cannot chain a root execution node that is not initialized.")
 
         nxt = functools.partial(nxt, **kwargs)
         return LazyExecutionNode[[R], K](nxt, parent=self)
@@ -84,7 +84,7 @@ class LazyExecutionChain(LazyExecutionNode[P, R]):
 
     def init(self, *args: P.args, **kwargs: P.kwargs) -> Self:
         if self._parent is not None:
-            raise RuntimeError("Cannot initialize a chained promise directly.")
+            raise RuntimeError("Cannot initialize an execution chain directly.")
         self._head = self._fn(*args, **kwargs)
         return self
 
