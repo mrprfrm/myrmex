@@ -36,9 +36,6 @@ classifiers = [
 ]
 license-files = ["LICEN[CS]E*"]
 dependencies = [
-    "aiohttp>=3.10.11",
-    "aiohttp-socks>=0.10.1",
-    "result>=0.17.0",
     "stem>=1.8.2",
     "trio>=0.32.0",
     "httpx[socks]>=0.28.1",

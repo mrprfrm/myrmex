@@ -20,7 +20,7 @@ class HttpCrawler:
         proxy: str | httpx.URL | httpx.Proxy | None = None,
     ):
         """
-        A simple crawler context manager using aiohttp.
+        A simple crawler context manager using httpx.
 
         Args:
             timeout: request timeout in seconds

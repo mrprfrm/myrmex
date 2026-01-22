@@ -1,100 +1,65 @@
 <img src="https://github.com/user-attachments/assets/fdcf9749-a847-474c-a03d-e6c92f630635" alt="Alt Text" max-height="250">
 
-# myrmex
+# antyr
 
 The compact web crawling toolkit.
 
-Unlike full-featured frameworks, `myrmex` does not implement an entire scraping pipeline. Instead, it focuses exclusively on core crawling functionality. Higher-level scraping logic is left to the specific implementation of your scraper.
+Unlike full-featured frameworks, `antyr` does not implement an entire scraping pipeline. Instead, it focuses exclusively on core crawling functionality. Higher-level scraping logic is left to the specific implementation of your crawler or processing pipeline.
 
-> If you're looking for a complete scraping framework, consider [Scrapy](https://github.com/scrapy/scrapy).
+> If you're looking for a complete scraping framework, consider Scrapy.
 
-`myrmex` provides a minimal interface through two crawler classes — `Crawler` and `TorCrawler` — for regular HTTP crawling and Tor-based anonymous crawling, respectively.
+`antyr` provides a minimal interface through a single crawler class — `HttpCrawler` — responsible for HTTP fetching with optional proxy support.
 
-### Key Capabilities
+## Key Capabilities
 
-- Asynchronous context management for automatic resource handling
-- Built on `aiohttp` for HTTP requests
-- Executes synchronous operations using the native asyncio thread pool (non-blocking)
-- Functional-style error handling via [Result](https://github.com/rustedpy/result)
-- Configurable per-operation timeouts for robust request management
+- Asynchronous context management for explicit resource handling
+- Built on **Trio** for structured concurrency
+- Uses **httpx** for HTTP requests
+- Native SOCKS / proxy support via `httpx[socks]`
+- Minimal API surface with no framework-level assumptions
 
 ## Installation
 
 Install via pip:
 
 ```bash
-pip install myrmex
+pip install antyr
 ```
 
 Or using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-uv add myrmex
+uv add antyr
 ```
 
-Please note that the following libraries will be installed alongside `myrmex`:
+Please note that the following libraries will be installed alongside `antyr`:
 
-- `aiohttp` – for HTTP requests
-- `aiohttp-socks` – for SOCKS5 proxy support
-- `stem` – for Tor control port integration
-- `result` – for functional-style error handling
+- `trio` – structured async runtime
+- `httpx[socks]` – HTTP client with SOCKS proxy support
+- `stem` – Tor control integration (optional)
 
 ## Configuration
 
-`Crawler` accepts the following options:
+`HttpCrawler` accepts the following options:
 
-| Parameter | Type   | Default | Description                                |
-| --------- | ------ | ------- | ------------------------------------------ |
-| `timeout` | `int`  | `10`    | Timeout (in seconds) for HTTP requests.    |
-| `headers` | `dict` | `None`  | HTTP headers to include with each request. |
-
-…and `TorCrawler` accepts the following options during initialization:
-
-| Parameter  | Type   | Default | Description                                                  |
-| ---------- | ------ | ------- | ------------------------------------------------------------ |
-| `address`  | `str`  | `None`  | SOCKS5 proxy address for routing traffic through Tor.        |
-| `password` | `str`  | `None`  | Control port password for authenticating with the Tor proxy. |
-| `timeout`  | `int`  | `10`    | Timeout (in seconds) for HTTP requests.                      |
-| `headers`  | `dict` | `None`  | HTTP headers to include with each request.                   |
+| Parameter  | Type                                      | Default | Description                                   |
+| ---------- | ----------------------------------------- | ------- | --------------------------------------------- |
+| `base_url` | `str`                                     | `""`    | Base URL for resolving relative request paths |
+| `timeout`  | `float`                                   | `10`    | Timeout (in seconds) for HTTP requests        |
+| `proxy`    | `str \| httpx.URL \| httpx.Proxy \| None` | `None`  | Optional HTTP or SOCKS proxy                  |
 
 ## Usage Example
 
-The example below demonstrates how to fetch your current IP address over the Tor network:
+The example below demonstrates fetching a resource using a base URL and relative path:
 
 ```python
-import asyncio
-from myrmex import TorCrawler
+import trio
+from antyr import HttpCrawler
 
 async def main():
-    async with TorCrawler("socks5h://127.0.0.1:9050", password="password") as crawler:
-        await crawler.rotate_ip()  # optional: rotates IP before request
-        result = await crawler.fetch("http://httpbin.org/ip")
-        if result.is_ok():
-            print("Current IP:", result.unwrap())
+    async with HttpCrawler("http://httpbin.org") as crawler:
+        result = await crawler.fetch("/ip", follow_redirects=True).save()
+        print(result)
 
-asyncio.run(main())
-```
-
-## Tor Setup
-
-Since `TorCrawler` is strictly associated with Tor network usage, ensure that you have a configured and running Tor instance before using it.
-
-Update your `torrc` configuration file with the following:
-
-```torrc
-SocksPort 0.0.0.0:9050
-ControlPort 0.0.0.0:9051
-HashedControlPassword ***
-```
-
-To generate a hashed password:
-
-```bash
-tor --hash-password your_password
-```
-
-Start Tor manually in the background:
-
-```bash
-tor &
+trio.run(main)
 ```
